@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>PDV Cantina SAFE</title>
+  <style>
+    :root{
+      /* Paleta SAFE */
+      --blue:#5BAEE2; --teal:#60C0BF; --navy:#1D2951;
+
+      --bg:#ffffff; --fg:#0f172a; --muted:#475569; --accent:var(--navy);
+      --ok:#16a34a; --warn:#f59e0b; --err:#ef4444; --card:#f8fafc; --br:16px;
+    }
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:16px system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial}
+    .app{display:grid;grid-template-columns: 1fr 360px; gap:16px; padding:16px; max-width:1400px; margin:auto}
+    header{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+    .logo{width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,var(--blue),var(--teal))}
+    .title{font-size:20px;font-weight:700}
+    .search{margin-left:auto}
+    .search input{padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;min-width:220px}
+    .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+    .card{background:var(--card);border:1px solid #e2e8f0;border-radius:var(--br);overflow:hidden;display:flex;flex-direction:column}
+    .card img{width:100%;height:130px;object-fit:cover;background:#e5e7eb}
+    .card .p{padding:10px}
+    .name{font-weight:600}
+    .price{color:var(--accent);font-weight:700}
+    .stock{color:var(--muted);font-size:13px}
+    .btn{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:12px;border:1px solid #e2e8f0;background:#fff}
+    .btn.primary{background:var(--accent);color:#fff;border-color:transparent}
+    .btn.ghost{background:#fff}
+    .btn[disabled]{opacity:.5;cursor:not-allowed}
+    .side{background:#fff;border:1px solid #e2e8f0;border-radius:var(--br);padding:12px;display:flex;flex-direction:column;gap:12px;height:calc(100vh - 60px);position:sticky;top:12px}
+    .cart-item{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;border-bottom:1px dashed #e5e7eb;padding:6px 0}
+    .qty{display:inline-flex;align-items:center;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden}
+    .qty button{border:0;background:#f1f5f9;padding:6px 10px;cursor:pointer}
+    .qty input{width:44px;text-align:center;border:0;background:#fff}
+    .sum{display:flex;flex-direction:column;gap:6px;margin-top:auto}
+    .row{display:flex;justify-content:space-between}
+    .total{font-size:20px;font-weight:800}
+    .pill{font-size:12px;background:#eef2ff;color:#3730a3;border-radius:999px;padding:2px 10px}
+    .modal{position:fixed;inset:0;background:rgba(15,23,42,0.5);display:none;align-items:center;justify-content:center;padding:16px}
+    .modal.active{display:flex}
+    .dialog{background:#fff;max-width:540px;width:100%;border-radius:16px;border:1px solid #e2e8f0;overflow:hidden}
+    .dialog header{padding:12px 14px;border-bottom:1px solid #e2e8f0}
+    .dialog .content{padding:14px;display:flex;flex-direction:column;gap:10px}
+    .qr{display:flex;flex-direction:column;align-items:center;gap:10px}
+    .qr img{width:260px;height:260px;border-radius:10px;border:1px solid #e2e8f0;background:#fff}
+    .copy{display:flex;gap:8px}
+    .copy input{flex:1;padding:10px;border:1px solid #e2e8f0;border-radius:10px}
+    @media (max-width: 980px){
+      .app{grid-template-columns:1fr}
+      .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .side{position:static;height:auto}
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <main>
+    <header>
+      <div class="logo"></div>
+      <div class="title">PDV Cantina SAFE</div>
+      <div class="search"><input id="q" placeholder="Buscar produto..." oninput="render()"></div>
+      <span class="pill" id="sync">sincronizando...</span>
+    </header>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <aside class="side">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <strong>Carrinho</strong>
+      <button class="btn ghost" onclick="clearCart()">Limpar</button>
+    </div>
+    <div id="cart"></div>
+    <div class="sum">
+      <div class="row"><span>Itens</span><span id="sumQty">0</span></div>
+      <div class="row"><span>Subtotal</span><span id="sumSub">R$ 0,00</span></div>
+      <div class="row total"><span>Total</span><span id="sumTot">R$ 0,00</span></div>
+      <button class="btn primary" onclick="checkout()" id="btnCheckout" disabled>Finalizar (PIX)</button>
+    </div>
+  </aside>
+</div>
+
+<!-- Modal PIX -->
+<div class="modal" id="modal">
+  <div class="dialog">
+    <header><strong>Pagamento por PIX</strong></header>
+    <div class="content">
+      <div class="qr">
+        <img id="qrImg" alt="QR PIX" />
+        <div class="copy">
+          <input id="pixText" readonly>
+          <button class="btn" onclick="copyPix()">Copiar</button>
+        </div>
+        <small class="muted">Abra o app do seu banco, use o QR ou cole o código PIX. Depois clique em <b>Já paguei</b>.</small>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn ghost" onclick="closeModal()">Cancelar</button>
+        <button class="btn primary" onclick="confirmPaid()">Já paguei</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ===== CONFIG (sua URL e API KEY) =====
+  const API_BASE = 'https://script.google.com/macros/s/AKfycbxXhIZ3FOyOmuLoghAlBVFEXfT2UhOLtqfbbqZ4DqS7cDcETeWq24TfL83M0N6fmAVk5w/exec';
+  const API_KEY  = 'SAFE_PDV_a84b3e1c6f9d4a72b15c0e93d8f1a6b7';
+
+  // ===== STATE =====
+  let PRODUCTS = [];
+  let CONFIG = { pix_qr_url:'', pix_copiaecola:'' };
+  let CART = new Map(); // product_id -> {product, qty}
+
+  const fmtBRL = v => (v||0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
+
+  async function fetchJSON(url){
+    const r = await fetch(url);
+    return r.json();
+  }
+  async function postJSON(data){
+    // usar text/plain para evitar preflight/OPTIONS no Apps Script
+    const r = await fetch(API_BASE, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify(data)
+    });
+    return r.json();
+  }
+
+  async function loadAll(){
+    try{
+      document.getElementById('sync').textContent = 'sincronizando...';
+      const [cfg, list] = await Promise.all([
+        fetchJSON(API_BASE + '?action=getConfig'),
+        fetchJSON(API_BASE + '?action=listProducts')
+      ]);
+      CONFIG = (cfg && cfg.config) || CONFIG;
+      PRODUCTS = (list && list.products) || [];
+      render();
+      document.getElementById('sync').textContent = 'sincronizado';
+    }catch(e){
+      document.getElementById('sync').textContent = 'erro de sync';
+      console.error(e);
+      alert('Falha ao carregar produtos/config. Verifique o deploy do Apps Script e CORS.');
+    }
+  }
+
+  function render(){
+    const q = (document.getElementById('q').value || '').toLowerCase();
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '';
+    PRODUCTS
+      .filter(p => !q || p.name.toLowerCase().includes(q))
+      .forEach(p => {
+        const el = document.createElement('div');
+        el.className = 'card';
+        el.innerHTML = `
+          <img src="${p.img||''}" alt="${p.name}">
+          <div class="p">
+            <div class="name">${p.name}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+              <span class="price">${fmtBRL(p.price)}</span>
+              <span class="stock">${p.stock>0? (p.stock+' em estoque') : 'esgotado'}</span>
+            </div>
+            <div style="margin-top:8px;display:flex;gap:8px">
+              <button class="btn" ${p.stock<=0?'disabled':''} onclick='addToCart("${p.id}")'>Adicionar</button>
+            </div>
+          </div>`;
+        grid.appendChild(el);
+      });
+    renderCart();
+  }
+
+  function addToCart(id){
+    const p = PRODUCTS.find(x=> String(x.id)===String(id));
+    if (!p || p.stock<=0) return;
+    const row = CART.get(id) || { product:p, qty:0 };
+    row.qty = Math.min((row.qty||0)+1, p.stock);
+    CART.set(id, row);
+    renderCart();
+  }
+  function removeFromCart(id){ CART.delete(id); renderCart(); }
+  function setQty(id, q){
+    const row = CART.get(id); if (!row) return;
+    const max = row.product.stock;
+    row.qty = Math.max(1, Math.min(Number(q||1), max));
+    CART.set(id, row); renderCart();
+  }
+  function clearCart(){ CART.clear(); renderCart(); }
+
+  function renderCart(){
+    const box = document.getElementById('cart');
+    box.innerHTML = '';
+    let sumQty=0, subtotal=0;
+    for (const [id,row] of CART){
+      sumQty += row.qty;
+      subtotal += row.product.price * row.qty;
+      const el = document.createElement('div');
+      el.className = 'cart-item';
+      el.innerHTML = `
+        <div>
+          <div style="font-weight:600">${row.product.name}</div>
+          <div style="font-size:13px;color:#64748b">${fmtBRL(row.product.price)}</div>
+        </div>
+        <div class="qty">
+          <button onclick='setQty("${id}", ${row.qty-1})'>-</button>
+          <input value="${row.qty}" onchange='setQty("${id}", this.value)'>
+          <button onclick='setQty("${id}", ${row.qty+1})'>+</button>
+        </div>
+        <div>${fmtBRL(row.product.price*row.qty)}</div>
+        <button class="btn" onclick='removeFromCart("${id}")'>✕</button>`;
+      box.appendChild(el);
+    }
+    document.getElementById('sumQty').textContent = sumQty;
+    document.getElementById('sumSub').textContent = fmtBRL(subtotal);
+    document.getElementById('sumTot').textContent = fmtBRL(subtotal);
+    document.getElementById('btnCheckout').disabled = sumQty===0;
+  }
+
+  function checkout(){
+    // abre modal com QR estático + copia e cola (vindos da planilha/config)
+    document.getElementById('qrImg').src = CONFIG.pix_qr_url || '';
+    document.getElementById('pixText').value = CONFIG.pix_copiaecola || '';
+    document.getElementById('modal').classList.add('active');
+  }
+  function closeModal(){ document.getElementById('modal').classList.remove('active'); }
+
+  async function confirmPaid(){
+    // envia venda + baixa estoque
+    const items = Array.from(CART.values()).map(({product, qty}) => ({ product_id: product.id, qty, price: product.price }));
+    const subtotal = items.reduce((s,i)=> s + i.price*i.qty, 0);
+    const payload = { action:'saveSale', apiKey: API_KEY, sale: { items, subtotal, total: subtotal } };
+    const res = await postJSON(payload);
+    if (!res.ok){
+      alert('Erro: '+(res.error||'falha ao salvar'));
+      return;
+    }
+    clearCart();
+    closeModal();
+    await loadAll();
+    alert('Pagamento confirmado! Estoque atualizado.');
+  }
+
+  async function copyPix(){
+    const el = document.getElementById('pixText');
+    el.select(); el.setSelectionRange(0,99999);
+    try{ await navigator.clipboard.writeText(el.value); alert('Código PIX copiado.'); }
+    catch{ document.execCommand('copy'); alert('Copiado.'); }
+  }
+
+  // primeiro load + auto-refresh a cada 30s
+  loadAll();
+  setInterval(loadAll, 30000);
+</script>
+</body>
+</html>
