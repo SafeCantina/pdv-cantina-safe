@@ -39,7 +39,7 @@
     .row{display:flex;justify-content:space-between}
     .total{font-size:20px;font-weight:800}
     .pill{font-size:12px;background:#eef2ff;color:#3730a3;border-radius:999px;padding:2px 10px}
-    .modal{position:fixed;inset:0;background:rgba(15,23,42,0.5);display:none;align-items:center;justify-content:center;padding:16px}
+    .modal{position:fixed;inset:0;background:rgba(15,23,42,0.5);display:none;align-items:center;justify-content:center;padding:16px;z-index:50}
     .modal.active{display:flex}
     .dialog{background:#fff;max-width:540px;width:100%;border-radius:16px;border:1px solid #e2e8f0;overflow:hidden}
     .dialog header{padding:12px 14px;border-bottom:1px solid #e2e8f0}
@@ -48,6 +48,11 @@
     .qr img{width:260px;height:260px;border-radius:10px;border:1px solid #e2e8f0;background:#fff}
     .copy{display:flex;gap:8px}
     .copy input{flex:1;padding:10px;border:1px solid #e2e8f0;border-radius:10px}
+
+    /* Toast de agradecimento */
+    .toast{position:fixed;left:50%;bottom:16px;transform:translateX(-50%) translateY(20px);opacity:0;transition:all .25s ease;z-index:60;background:#1D2951;color:#fff;padding:12px 16px;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.15)}
+    .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
     @media (max-width: 980px){
       .app{grid-template-columns:1fr}
       .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -97,11 +102,14 @@
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button class="btn ghost" onclick="closeModal()">Cancelar</button>
-        <button class="btn primary" onclick="confirmPaid()">Já paguei</button>
+        <button class="btn primary" id="btnPaid" onclick="confirmPaid()">Já paguei</button>
       </div>
     </div>
   </div>
 </div>
+
+<!-- Toast -->
+<div class="toast" id="toast">Compra registrada. Obrigado!</div>
 
 <script>
   // ===== CONFIG (sua URL e API KEY) =====
@@ -112,6 +120,7 @@
   let PRODUCTS = [];
   let CONFIG = { pix_qr_url:'', pix_copiaecola:'' };
   let CART = new Map(); // product_id -> {product, qty}
+  let BUSY = false;
 
   const fmtBRL = v => (v||0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
 
@@ -120,7 +129,7 @@
     return r.json();
   }
   async function postJSON(data){
-    // usar text/plain para evitar preflight/OPTIONS no Apps Script
+    // text/plain evita preflight/OPTIONS no Apps Script
     const r = await fetch(API_BASE, {
       method:'POST',
       headers:{ 'Content-Type':'text/plain;charset=utf-8' },
@@ -143,7 +152,6 @@
     }catch(e){
       document.getElementById('sync').textContent = 'erro de sync';
       console.error(e);
-      alert('Falha ao carregar produtos/config. Verifique o deploy do Apps Script e CORS.');
     }
   }
 
@@ -157,7 +165,7 @@
         const el = document.createElement('div');
         el.className = 'card';
         el.innerHTML = `
-          <img src="${p.img||''}" alt="${p.name}">
+          <img src="${p.img||''}" alt="${p.name}" onerror="this.src='https://placehold.co/600x400/png?text=Cantina+SAFE'; this.onerror=null;">
           <div class="p">
             <div class="name">${p.name}</div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
@@ -216,41 +224,61 @@
     document.getElementById('sumQty').textContent = sumQty;
     document.getElementById('sumSub').textContent = fmtBRL(subtotal);
     document.getElementById('sumTot').textContent = fmtBRL(subtotal);
-    document.getElementById('btnCheckout').disabled = sumQty===0;
+    document.getElementById('btnCheckout').disabled = sumQty===0 || BUSY;
   }
 
   function checkout(){
-    // abre modal com QR estático + copia e cola (vindos da planilha/config)
     document.getElementById('qrImg').src = CONFIG.pix_qr_url || '';
     document.getElementById('pixText').value = CONFIG.pix_copiaecola || '';
     document.getElementById('modal').classList.add('active');
   }
   function closeModal(){ document.getElementById('modal').classList.remove('active'); }
 
+  function showToast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg || 'Compra registrada. Obrigado!';
+    t.classList.add('show');
+    setTimeout(()=> t.classList.remove('show'), 1600);
+  }
+
   async function confirmPaid(){
-    // envia venda + baixa estoque
-    const items = Array.from(CART.values()).map(({product, qty}) => ({ product_id: product.id, qty, price: product.price }));
+    if (BUSY) return;
+    BUSY = true;
+    document.getElementById('btnPaid').disabled = true;
+    document.getElementById('btnCheckout').disabled = true;
+
+    // monta payload
+    const items = Array.from(CART.values()).map(({product, qty}) => ({
+      product_id: product.id, qty, price: product.price
+    }));
     const subtotal = items.reduce((s,i)=> s + i.price*i.qty, 0);
-    const payload = { action:'saveSale', apiKey: API_KEY, sale: { items, subtotal, total: subtotal } };
-    const res = await postJSON(payload);
-    if (!res.ok){
-      alert('Erro: '+(res.error||'falha ao salvar'));
-      return;
+
+    // --- OTIMISTA: fecha modal, limpa carrinho, atualiza estoque local e agradece ---
+    closeModal();
+    // aplica baixa de estoque local para resposta instantânea
+    for (const {product, qty} of Array.from(CART.values())){
+      const p = PRODUCTS.find(x=> String(x.id)===String(product.id));
+      if (p) p.stock = Math.max(0, (p.stock||0) - qty);
     }
     clearCart();
-    closeModal();
-    await loadAll();
-    alert('Pagamento confirmado! Estoque atualizado.');
+    render();
+    showToast('Compra registrada. Obrigado!');
+
+    // dispara salvamento em background (não trava a UI)
+    postJSON({ action:'saveSale', apiKey: API_KEY, sale: { items, subtotal, total: subtotal } })
+      .then(res => { if (!res.ok) console.warn('Falha ao salvar venda:', res.error); })
+      .catch(err => console.error('Erro ao salvar venda:', err))
+      .finally(() => { BUSY = false; document.getElementById('btnPaid').disabled = false; setTimeout(loadAll, 800); });
   }
 
   async function copyPix(){
     const el = document.getElementById('pixText');
     el.select(); el.setSelectionRange(0,99999);
-    try{ await navigator.clipboard.writeText(el.value); alert('Código PIX copiado.'); }
-    catch{ document.execCommand('copy'); alert('Copiado.'); }
+    try{ await navigator.clipboard.writeText(el.value); showToast('PIX copiado'); }
+    catch{ document.execCommand('copy'); showToast('PIX copiado'); }
   }
 
-  // primeiro load + auto-refresh a cada 30s
+  // primeiro load + auto-refresh
   loadAll();
   setInterval(loadAll, 30000);
 </script>
